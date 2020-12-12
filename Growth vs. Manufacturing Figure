@@ -1,0 +1,42 @@
+#import libraries
+library(ggplot2)
+library(plotly)
+library(countrycode)
+
+new <- theme_set(theme_bw())
+theme_update(text=element_text(size=16,  family="Times New Roman"))
+
+growthvmanu <- read.csv("/Users/johannes/Desktop/Minerva/Capstone/Growth_Manufacturing_WB_2010_2020/Growth_Manufacturing_Data.csv",
+                        na.strings = "..")
+
+#country code package allows for getting regions/continents from 
+#country codes/names
+growthvmanu$region <- countrycode(sourcevar = growthvmanu$Country.Name,
+                            origin = "country.name",
+                            destination = "region")
+colnames(growthvmanu)
+
+#take the differences 
+#possibly extend this by grouping by region and plotting the differences over time
+#similar to how they do it in Herrendorf et. al. 2014
+growthvmanu$delta_manu <- growthvmanu[,55] - growthvmanu[,50]
+growthvmanu$delta_growth <- growthvmanu[,53] - growthvmanu[,48]
+
+
+#make ggplot2 object, exclude the grouped stats. 
+#We can use the grouped stats for the over time graphs if we make some
+p <- ggplot(data = growthvmanu[0:217,], 
+            aes( y = delta_growth,
+                 x = delta_manu, 
+                 color=region, 
+                 text = Country.Name)) + 
+  #set the axis
+  labs(y = "∆GDP Growth (%)", x = "∆Growth in Manufacturing (%-points)") +
+  geom_point()
+
+#plot the figure 
+fig <- ggplotly(p)
+
+#include the country name in the hover-information
+fig$text <- growthvmanu$Country.Name
+fig
