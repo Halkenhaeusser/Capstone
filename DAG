@@ -1,0 +1,119 @@
+## Capstone DAG
+
+library(dagitty)
+
+theme_update(text=element_text(size=16,  family="Times New Roman"))
+
+
+graph_Iterative <- dagitty('dag {
+  "Commodity Dependence" [pos="-0.836,0.846"]
+  "Economic Development" [outcome,pos="-0.087,0.860"]
+  "Export of Manufactured Goods" [exposure,pos="-0.076,-0.331"]
+  "Human Capital" [pos="0.957,-0.124"]
+  "Investment Environment" [pos="-1.055,0.139"]
+  "Labor Pull" [pos="0.135,0.110"]
+  "Labor Push" [pos="-0.303,0.113"]
+  "Price volatility" [pos="-0.620,0.108"]
+  "Sectoral Change" [outcome,pos="-0.110,0.563"]
+  "Tariff Differential" [pos="-0.066,-0.954"]
+  "Technological Progress" [pos="0.465,-0.000"]
+  Geography [pos="-1.535,0.171"]
+  Institutions [pos="0.434,0.665"]
+  "Commodity Dependence" -> "Economic Development"
+  "Export of Manufactured Goods" -> "Labor Pull"
+  "Export of Manufactured Goods" -> "Sectoral Change"
+  "Human Capital" -> "Export of Manufactured Goods"
+  "Human Capital" -> "Labor Push"
+  "Human Capital" -> "Sectoral Change"
+  "Investment Environment" -> "Export of Manufactured Goods"
+  "Investment Environment" -> "Sectoral Change"
+  "Labor Pull" -> "Sectoral Change"
+  "Labor Push" -> "Export of Manufactured Goods"
+  "Labor Push" -> "Sectoral Change"
+  "Price volatility" -> "Export of Manufactured Goods"
+  "Price volatility" -> "Sectoral Change"
+  "Sectoral Change" -> "Commodity Dependence"
+  "Sectoral Change" -> "Economic Development"
+  "Tariff Differential" -> "Export of Manufactured Goods"
+  "Technological Progress" -> "Export of Manufactured Goods"
+  "Technological Progress" -> "Labor Pull"
+  "Technological Progress" -> "Labor Push"
+  "Technological Progress" -> "Sectoral Change"
+  Geography -> "Economic Development"
+  Geography -> "Export of Manufactured Goods"
+  Geography -> "Sectoral Change"
+  Institutions -> "Economic Development"
+  Institutions -> "Sectoral Change"
+}')
+
+
+graph_Draft_Dec <- dagitty('dag {
+  Conflict [pos="1.126,-1.438"]
+  Democracy [pos="0.503,-1.138"]
+  Education [pos="-1.711,-1.713"]
+  ExportsLagged [pos="-1.697,0.250"]
+  FDI [pos="-0.035,-0.982"]
+  Homophily [pos="-2.277,-0.961"]
+  Institutions [pos="-1.417,-0.567"]
+  StructuralChange [outcome,pos="1.004,-0.276"]
+  TD [exposure,pos="-2.327,-0.255"]
+  TechProgress [pos="-1.267,-0.822"]
+  Conflict -> Democracy
+  Conflict -> Education
+  Conflict -> Homophily
+  Conflict -> StructuralChange
+  Democracy -> Education
+  Democracy -> Homophily
+  Democracy -> StructuralChange
+  Education -> FDI
+  Education -> Homophily
+  Education -> StructuralChange
+  Education -> TechProgress
+  ExportsLagged -> Homophily
+  ExportsLagged -> StructuralChange
+  ExportsLagged -> TD
+  FDI -> Homophily
+  FDI -> StructuralChange
+  FDI -> TechProgress
+  Homophily -> StructuralChange
+  Homophily -> TD
+  Institutions -> Education
+  Institutions -> Homophily
+  Institutions -> StructuralChange
+  Institutions -> TD
+  Institutions -> TechProgress
+  TD -> StructuralChange
+  TechProgress -> StructuralChange
+  TechProgress -> TD
+}')
+set.seed(111)
+plot(graphLayout(graph_Draft_Dec))
+
+library(ggdag)
+theme_set(theme_dag())
+tidy_dagitty(graph_Draft_Dec)
+ggdag(graph_Draft_Dec, edge_type = "link_arc")
+
+dagified <- dagify(Democracy ~ Conflict,
+                   Education ~ Conflict + Democracy + Institutions,
+                   Homophily ~ Conflict + Democracy + Education + ExportsLagged + FDI + Institutions,
+                   StructuralChange ~ Conflict + Democracy + Education + ExportsLagged + FDI+ Homophily + Institutions + TD + TechProgress,
+                   FDI ~ Education + Institutions,
+                   TechProgress ~ Education + FDI + Institutions,
+                   TD ~ ExportsLagged + Homophily + Institutions + TechProgress,
+                   exposure = "TD",
+                   outcome = "StructuralChange", 
+                   latent = 'Homophily',
+                   labels = c("Democracy" = "Democracy", 
+                              "Education" = "Education",
+                              "StructuralChange" = "Structural\n Change",
+                              "Homophily" = "Homophily",
+                              "FDI" = "FDI",
+                              "ExportsLagged" = "Exports\n Lagged", 
+                              "Institutions" = "Institutions", 
+                              "Conflict" = "Conflict", 
+                              "TD" = "Tariff\n Diff", 
+                              "TechProgress" = "Tech\nProgress"))
+
+
+ggdag(dagified, text = FALSE, use_labels = "label") 
