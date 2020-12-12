@@ -1,0 +1,560 @@
+#### Packages ####
+
+library(tidyverse)
+library(countrycode)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(rgeos)
+library(ggspatial)
+library(gganimate)
+library(psych)
+library(outreg)
+library(AER)
+library(plotly)
+library(reshape2)
+
+new <- theme_set(theme_bw())
+theme_update(text=element_text(size=16,  family="Times New Roman"))
+
+
+#### WITS Data ####
+
+data <- read.csv("/Users/johannes/Desktop/Minerva/Capstone/TariffData/DataJobID-2083378_2083378_MultiYearwithOECD.csv")
+
+no_na_data <- drop_na(data ,c("Trade.Year","Product","Partner", "Reporter","Imports.Value.in.1000.USD", "Simple.Average"))
+
+no_na_data$agri <- no_na_data$Product < 25
+
+## specify koreas to north and south
+no_na_data[(no_na_data$Reporter.Name == "Korea, Rep."), c("Reporter.Name")] <- "South Korea"
+no_na_data[(no_na_data$Partner.Name == "Korea, Rep."), c("Partner.Name")] <- "South Korea"
+
+no_na_data[(no_na_data$Reporter.Name == "Korea, Dem. Rep."), c("Reporter.Name")] <- "North Korea"
+no_na_data[(no_na_data$Partner.Name == "Korea, Dem. Rep."), c("Partner.Name")] <- "North Korea"
+
+
+master_frame <- data.frame()
+
+year_looking_at <- 2006
+
+Exports <- unique(no_na_data$Partner)
+w_tariff_diff <- unique(no_na_data$Partner)
+u_tariff_diff <- unique(no_na_data$Partner)
+raw_diff <- unique(no_na_data$Partner)
+
+
+country <- unique(no_na_data$Partner.Name)
+country_code <- c(1:length(country))
+
+oecd <- c("Australia", "Austria", "Belgium", "Canada", "Czech Republic", "Denmark", "Finland", "France",
+          "Germany", "Greece", "Hungary", "Iceland", "Ireland", "Italy", "Japan", "South Korea", "Luxembourg", "Mexico", "Netherlands",
+          "New Zealand", "Norway", "Poland", "Slovak Republic", "Spain", "Sweden", "Switzerland", "Turkey", "United Kingdom", "United States" )
+
+master_frame <- data.frame()
+for (year_looking_at in unique(no_na_data$Tariff.Year)){
+  data_year <- subset(no_na_data, Tariff.Year == year_looking_at)
+  time_year <-  rep(c(year_looking_at),each= length(country)) 
+  
+  #iterate through the countries (partner because the reporters are the ones setting the tariff)
+  for (i in 1:length(country)){
+    
+    #take just the data that is the partner
+    data_year_i <- subset(data_year, Partner.Name == country[i])
+    country_code[i] <- data_year_i$Partner[1]
+    
+    #calculate the value of their total exports
+    Exports[i] <- sum(data_year_i$Imports.Value.in.1000.USD)
+    
+    #set up a couple of vectors
+    imp_of_oecd <- c(1:length(oecd))
+    weighted_tariff_diff <- c(1:length(oecd))
+    unweighted_tariff_diff <- c(1:length(oecd))
+    not_weigthed <- c(1:length(oecd))
+    
+    for (j in 1:length(oecd)){
+      
+      data_year_i_j <-  subset(data_year_i, Reporter.Name == oecd[j])
+      imp_from_oecd[j] <- sum(data_year_i_j$Imports.Value.in.1000.USD, na.rm = T)
+      unweighted_tariff_diff <- (mean(data_year_i_j$Simple.Average[data_year_i_j$agri == F]) - mean(data_year_i_j$Simple.Average[data_year_i_j$agri == T])) * imp_of_oecd[j]
+      weighted_tariff_diff[j] <- (weighted.mean(data_year_i_j$Simple.Average[data_year_i_j$agri == F], data_year_i_j$Imports.Value.in.1000.USD[data_year_i_j$agri == F]) - weighted.mean(data_year_i_j$Simple.Average[data_year_i_j$agri == T],data_year_i_j$Imports.Value.in.1000.USD[data_year_i_j$agri == T])) * imp_of_oecd[j]
+      not_weigthed[j] <-  (mean(data_year_i_j$Simple.Average[data_year_i_j$agri == F]) - mean(data_year_i_j$Simple.Average[data_year_i_j$agri == T])) 
+    }
+  
+    w_tariff_diff[i] <- sum(weighted_tariff_diff, na.rm = TRUE)/sum(imp_of_oecd, na.rm = TRUE)
+    u_tariff_diff[i] <- sum(unweighted_tariff_diff, na.rm = TRUE)/sum(imp_of_oecd, na.rm = TRUE)
+    raw_diff[i] <- mean(not_weigthed, na.rm = TRUE)
+  }
+  
+  # make a master dataframe for the countries
+  
+  country[37] <- "Ethiopia"
+  country[80] <- "Serbia"
+  country[149] <- "NOT SPECIFIED_TERR"
+  country[59]<- "NOT SPECIFIED_FMS"
+  yearly_frame <- data.frame(country, country_code, w_tariff_diff, u_tariff_diff,Exports, raw_diff, time_year)
+  colnames(yearly_frame) <- c("country", 'country_no', 'weighted_td',"unweighted_td","Exports", "raw_td", 'time_year')
+  master_frame <- rbind(master_frame, yearly_frame)
+}
+
+
+master_frame$country_code <- countrycode(sourcevar = master_frame$country,
+                                                               origin = "country.name",
+                                                               destination = "iso3c")
+hist(w_tariff_diff)
+hist(u_tariff_diff)
+hist(raw_diff)
+
+
+
+
+
+#### World Bank Data #### 
+wb_data <- read.csv("/Users/johannes/Desktop/Minerva/Capstone/Capstone_Country_Data/bebe260f-09bf-48cc-b041-5f3c0b55d5ef_Data.csv",
+                            na.strings = "..")
+
+#merge with master_frame
+#master_merge <- merge(subset(wb_data, Time == year_looking_at), master_frame, by.x = "Country.Code", by.y = "country_code")
+master_merge <- merge(wb_data, master_frame, by.x =c("Time", "Country.Code"), by.y = c("time_year", "country_code"), all.x = F, all.y = F)
+shorted_headings <- c("Time",                                                                                                            
+"Country.Code" ,                                                                                                   
+"Country.Name",                                                                                                    
+"Time.Code",                                                                                                       
+"EmployAgri",                       
+"RDexpGDP",                                             
+"RDResearchersMilpeople",                                                     
+"TaxGDP",                                                                      
+"TradeGDP",                                                                
+"TradeServicesGDP",                                                                
+"AgriValueAddedGDP",                               
+"GDPcurrentUS",                                                                              
+"GDPpc",                                                                   
+"ExpEduGDP",                                       
+"IndustryValueAddedGDP",                                      
+"AgriExports",                               
+"ManuExports",                                             
+"ReguEnv",                                  
+"CorruptionPublic",
+"IPpayments",                      
+"IPreceipts",                      
+"PropertyRights",                        
+"PrimaryEnroll",                         
+"SecondaryEnroll" ,                                                             
+"TertiaryGross",                                                             
+"JournalArticles",                                                      
+"Country",                                                                                                        
+"Country_no",                                                                                                      
+"weighted_td",                                                                                                     
+"unweighted_td",
+"Exports",
+"raw_td")    
+colnames(master_merge) <- shorted_headings
+
+master_merge$log_GDP <- log(master_merge$GDPpc)
+
+
+#### Extra Covariates ####
+
+wb_covariates <- read.csv("/Users/johannes/Desktop/Minerva/Capstone/Capstone_Country_Data/ExtraCovariate/1fff9d78-a496-494f-b79e-36b83c26efd1_Data.csv",
+                          na.strings = "..")
+headings_covariates <- c("Time",
+                         "Time.Code",
+                         "Country.Name",                                                                                                        
+                         "Country.Code",
+                         "FDINetInGDP", 
+                         "AirTransport",    
+                         "ArmsImports",    
+                         "Bribery",  
+                         "StartUpCostGNIpc",
+                         "EduExpTertiaryofTotal",
+                         "EduAttainBachelor",
+                         "EduAttainDoctoral",  
+                         "TaxEvasion",  
+                         "FirmsWithRD",
+                         "BroadbandPer100.people",
+                         "FDINetInBoP",
+                         "FDINetOutGDP",
+                         "FDINetOutBoP",
+                         "Gini",
+                         "InternetPerCapita",
+                         "InduDesignApp" ,
+                         "InternDisplaced",
+                         "TourismArrivals",
+                         "TourismReceiptsExports",     
+                         "ExportsHighInc",
+                         "MilitaryExp",
+                         "NetBilateralAidDAC", 
+                         "NetODAProvidedGNI",
+                         "NetODATotal",
+                         "NetODARceivedGNI", 
+                         "NetODAProvidedTotal",   
+                         "NetODAReceivedGovExp",
+                         "NetOfficialAidReceived", 
+                         "PatentApps",
+                         "RDExpGDP",
+                         "TertiaryGross",
+                         "RDperMill",
+                         "TMApps")
+
+colnames(wb_covariates) <- headings_covariates
+
+master_merge <- merge(master_merge, wb_covariates,by =c("Time","Time.Code", "Country.Code","Country.Name"), all.x = T, all.y = F)
+
+  
+  
+#### Cast data to panel format #### 
+#format is varname_year (!!!)
+master_merge <- subset(master_merge, select = -Time.Code)
+master_merge <- subset(master_merge, select = -Country_no)
+master_merge <- subset(master_merge, select = -Country)
+
+melted_df <- melt(master_merge, id.vars = c("Country.Name", "Country.Code", "Time"))
+master_casted <- dcast(melted_df, Country.Name +  Country.Code ~ ... + Time, value.var = "value")
+
+#check that the number is at the right spot
+names(master_casted)<-ifelse(substr(names(master_casted),1,2) %in% c("19","20"),    
+                             paste(substr(names(master_casted),6,nchar(master_casted)),
+                                   substr(names(master_casted),1,4),sep="_")   ,
+                             names(master_casted))
+
+master_casted <- cbind(master_casted[1:4], data.frame(sapply(master_casted[5:624], as.numeric)))
+
+## Add differences in agricultural employment (OUTCOME VARIABLE)
+master_casted$EmployAgriDiff_2008 <- master_casted$EmployAgri_2008 - master_casted$EmployAgri_2006
+master_casted$EmployAgriDiff_2010 <- master_casted$EmployAgri_2010 - master_casted$EmployAgri_2008
+master_casted$EmployAgriDiff_2012 <- master_casted$EmployAgri_2012 - master_casted$EmployAgri_2010
+master_casted$EmployAgriDiff_2014 <- master_casted$EmployAgri_2014 - master_casted$EmployAgri_2012
+master_casted$EmployAgriDiff_2015 <- master_casted$EmployAgri_2015 - master_casted$EmployAgri_2014
+master_casted$EmployAgriDiff_2016 <- master_casted$EmployAgri_2016 - master_casted$EmployAgri_2015
+master_casted$EmployAgriDiff_2017 <- master_casted$EmployAgri_2017 - master_casted$EmployAgri_2016
+master_casted$EmployAgriDiff_2018 <- master_casted$EmployAgri_2018 - master_casted$EmployAgri_2017
+
+# percentage change in agriculture employment 
+master_casted$EmployAgriDiff_17_10 <-( master_casted$EmployAgri_2017 - master_casted$EmployAgri_2010) 
+
+## get differences to 2006 
+master_casted$EmployAgriDiff_2006_2008 <- (master_casted$EmployAgri_2008 - master_casted$EmployAgri_2006)
+master_casted$EmployAgriDiff_2006_2010 <- (master_casted$EmployAgri_2010 - master_casted$EmployAgri_2006) 
+master_casted$EmployAgriDiff_2006_2012 <- (master_casted$EmployAgri_2012 - master_casted$EmployAgri_2006) #/master_casted$EmployAgri_2006*100 <- I tried using a percentage change. that did not go well.
+master_casted$EmployAgriDiff_2006_2014 <- (master_casted$EmployAgri_2014 - master_casted$EmployAgri_2006) #/master_casted$EmployAgri_2006*100
+master_casted$EmployAgriDiff_2006_2015 <- (master_casted$EmployAgri_2015 - master_casted$EmployAgri_2006) 
+master_casted$EmployAgriDiff_2006_2016 <- (master_casted$EmployAgri_2016 - master_casted$EmployAgri_2006)
+master_casted$EmployAgriDiff_2006_2017 <- (master_casted$EmployAgri_2017 - master_casted$EmployAgri_2006) #/master_casted$EmployAgri_2006*100
+master_casted$EmployAgriDiff_2006_2018 <- (master_casted$EmployAgri_2018 - master_casted$EmployAgri_2006) #/master_casted$EmployAgri_2006*100
+
+
+#### Make a world map with the tariff differentials ####
+world <- ne_countries(scale = "medium", returnclass = "sf")
+world_merged <-  merge(world, master_frame, by.x = "iso_a3", by.y = "country_code",all.x = F, all.y = T,  duplicateGeoms = F)
+world_merged$log_td <- log(world_merged$unweighted_td + 100)
+curr_year <- 2017
+# gen world map
+world_map_tariff_diffs <- ggplot(data = subset(world_merged, time_year == curr_year)) +
+  geom_sf(aes(fill = asinh(raw_td))) +
+  theme(legend.position="bottom") +
+  scale_fill_continuous(type = "gradient", trans = "pseudo_log") +
+  labs( fill = "TD") +
+  ggtitle(paste("World map", curr_year))
+
+
+world_map_tariff_diffs
+  
+#### Exploratory Figures ####
+
+#Histogram of TD
+hist_td_2017 <- ggplot(data = master_casted, aes(x = raw_td_2017)) +
+  labs( x = "Tariff Differential")+
+  geom_histogram()  +
+  labs(title = "Tariff Differential in 2017")
+
+hist_td_2017
+mean(master_casted$raw_td_2017, na.rm = TRUE)
+sd(master_casted$raw_td_2017, na.rm = TRUE)
+
+
+## Scatter Log GDP per Capita against Tariff Differential
+scatter_gdp_td <- ggplot(data = master_merge, aes(x = GDPpc, y = raw_td, text= Country.Name, frame = Time)) +
+  labs( x = "GDP pc", y = "Unweighted Tariff Differential")+
+  geom_point()  +
+  labs(title = "Year")
+
+scatter_gdp_td_plotly <- ggplotly(scatter_gdp_td)
+
+#include the country name in the hover-information
+scatter_gdp_td_plotly$text <- master_merge$Country.Name
+scatter_gdp_td_plotly
+
+
+#Scatter exports against tariff differential
+master_merge$log_td_u <- log(master_merge$unweighted_td + 100)
+scatter_td_exports <- ggplot(data = master_merge, aes(x = raw_td, y = Exports, text= Country.Name, frame = Time)) +
+  labs( x = "Unweighted Tariff Differential", y ='AgriCultural Exports') +
+  geom_point()  +
+  abline() + 
+  labs(title = "Year")
+
+scatter_td_exports_plotly <- ggplotly(scatter_td_exports)
+
+#include the country name in the hover-information
+scatter_td_exports_plotly$text <- master_merge$Country.Name
+scatter_td_exports_plotly
+
+
+
+#Scatter change in agricultural work
+employment_agri_time <- ggplot(data = master_merge, aes(x = EmployAgri, y = GDPpc, text= Country.Name, frame = Time)) +
+  labs( x = "EmployAgri", y ='GDPpc') +
+  geom_point() 
+
+employment_agri_time <- ggplotly(employment_agri_time)
+
+#include the country name in the hover-information
+employment_agri_time$text <- master_merge$Country.Name
+
+employment_agri_time
+
+
+
+#Scatter gdp against in agricultural share
+employment_agri_2017 <- ggplot(data = master_casted, aes(x = EmployAgri_2017, y = GDPpc_2017, ymax = 110000)) +
+  labs( x = "EmployAgri (% of total Employment)", y ='GDP p.c. ($US current)') +
+  geom_point() 
+
+employment_agri_2017 <- ggplotly(employment_agri_2017)
+
+employment_agri_2017
+
+#Scatter gdp against in change agricultural share
+employment_agri_2017 <- ggplot(data = master_casted, aes(x = EmployAgriDiff_2006_2017, y = GDPpc_2017, text = Country.Name, ymax = 110000)) +
+  labs( x = "∆ in Agricultural Employment (% of total Employment)", y ='GDP p.c. ($US current)') +
+  geom_point() 
+
+employment_agri_2017 <- ggplotly(employment_agri_2017)
+
+employment_agri_2017
+
+
+employment_agri_GDP <- ggplot(data = master_merge, aes(x = EmployAgri, y = GDPpc, text= Country.Name, frame = Time)) +
+  labs(x = "EmployAgri", y ='GDPpc') + 
+  geom_point()
+employment_agri_GDP <- ggplotly(employment_agri_GDP)
+
+#include the country name in the hover-information
+employment_agri_GDP$text <- master_merge$Country.Name
+
+employment_agri_GDP
+
+
+
+employment_agri_td <- ggplot(data = master_merge, aes(x = raw_td, y = EmployAgri, text= Country.Name, frame = Time)) +
+  labs( x = "Tariff Difference", y ='Employment in Agriculture (%)') +
+  geom_point() 
+
+employment_agri_td <- ggplotly(employment_agri_td)
+
+#include the country name in the hover-information
+employment_agri_td$text <- master_merge$Country.Name
+
+employment_agri_td
+
+
+
+employment_agri_td <- ggplot(data = master_casted, aes(x = raw_td_2017, y = EmployAgriDiff_17_10)) +
+  labs( x = "Tariff Difference", y ='%Employment in Agriculture (%)') +
+  geom_point() 
+
+employment_agri_diff_td
+
+
+#### Political Variables ####
+
+## Conflict data
+
+library(readxl)
+#Data: https://datacatalog.worldbank.org/dataset/spread-conflict-data
+#More raw data from PRIO https://www.prio.org/Data/Armed-Conflict/
+
+conflicts_data <- read_xls("/Users/johannes/Desktop/Minerva/Capstone/time_series_short_new_0.xls")
+conflicts_data$pop_affected[which(is.na(conflicts_data$pop_affected) == TRUE)] <- 0
+
+decadal_conflict <- aggregate(pop_affected ~ country, data = conflicts_data, FUN = mean, subset = year >= 1990  & year < 2000)
+colnames(decadal_conflict) <- c('country', paste('conflict', '1990', sep = "_"))
+
+for (year_i in c(2000, 2010)){
+  sub_frame <- aggregate(pop_affected ~ country, data = conflicts_data, FUN = mean, subset = year >= year_i  & year < year_i + 10)
+  colnames(sub_frame) <- c('country', paste('conflict', year_i, sep = "_"))
+  decadal_conflict <- merge(decadal_conflict, sub_frame, by = "country", all.x = T, all.y = T)
+}
+
+conflicts_melted <- melt(conflicts_data, id.vars = c("gwno", "country", "year"))
+conflicts <- dcast(conflicts_melted, gwno + country ~ ... + year)
+#check that the number is at the right spot
+names(conflicts)<-ifelse(substr(names(conflicts),1,2) %in% c("19","20"),    
+                             paste(substr(names(conflicts),6,nchar(conflicts)),
+                                   substr(names(conflicts),1,4),sep="_")   ,
+                             names(conflicts))
+#fixing some country labelling
+decadal_conflict[18, 1] <- "Belarus"
+decadal_conflict[92, 1] <- "North Korea"
+decadal_conflict[93, 1] <- "South Korea"
+
+decadal_conflict$country_code <- countrycode(sourcevar = decadal_conflict$country,
+                                            origin = "country.name",
+                                            destination = "iso3c")
+
+
+
+## Polity5: Data http://www.systemicpeace.org/inscrdata.html
+polity_data <- read_xls("/Users/johannes/Desktop/Minerva/Capstone/p5v2018.xls")
+polity_data <- subset(polity_data, year >= 1946)
+
+#change the polity scores to something aggregateable by the code-book: 
+#http://www.systemicpeace.org/inscr/p5manualv2018.pdf
+polity_data$polity[which(polity_data$polity == -66)] <- NA
+polity_data$polity[which(polity_data$polity == -88)] <- NA
+polity_data$polity[which(polity_data$polity == -77)] <- 0
+
+
+decadal_polity <- aggregate(polity ~ country + scode, data = polity_data, FUN = mean, subset = year >= 1950  & year < 1950 + 10)
+colnames(decadal_polity) <- c('country', 'scode', paste('polity', '1950', sep = "_"))
+
+for (year_i in seq(1960, 2010, 10)){
+  sub_frame <- aggregate(polity ~ country + scode, data = polity_data, FUN = mean, subset = year >= year_i  & year < year_i + 10)
+  colnames(sub_frame) <- c('country', 'scode', paste('polity', year_i, sep = "_"))
+  decadal_polity <- merge(decadal_polity, sub_frame, by = c("country", "scode"), all.x = T, all.y = T)
+}
+
+decadal_polity$country_code <- countrycode(sourcevar = decadal_polity$country,
+                                                        origin = "country.name",
+                                                        destination = "iso3c")
+
+decadal_polity <- drop_na(decadal_polity ,c("polity_2010"))
+decadal_polity[73, "country_code"] <- NA
+
+master_casted <- merge(master_casted, decadal_conflict, by.x = "Country.Code", by.y = 'country_code', all.x = T, all.y = F)
+master_casted <- merge(master_casted, decadal_polity[c("polity_2010", 'country_code')], by.x = "Country.Code", by.y = 'country_code', all.x = T, all.y = F)
+
+
+
+## mean OECD polity score
+mean(master_casted[master_casted$Country.Name %in% oecd, 'polity_2010'], na.rm = T)
+
+describeBy(master_merge[c('Time',"EmployAgri",                       
+                         "RDexpGDP",                                             
+                         "RDResearchersMilpeople",                                                     
+                         "TaxGDP",                                                                      
+                         "TradeGDP",                                                                
+                         "TradeServicesGDP",                                                                
+                         "AgriValueAddedGDP",                               
+                         "GDPcurrentUS",                                                                              
+                         "GDPpc",                                                                   
+                         "ExpEduGDP",                                       
+                         "IndustryValueAddedGDP",                                      
+                         "AgriExports",                               
+                         "ManuExports",                                             
+                         "ReguEnv",                                  
+                         "CorruptionPublic",
+                         "IPpayments",                      
+                         "IPreceipts",                      
+                         "PropertyRights",                        
+                         "PrimaryEnroll",                         
+                         "SecondaryEnroll",                                                             
+                         "TertiaryGross",                                                             
+                         "JournalArticles",                                                      
+                         "weighted_td",                                                                                                     
+                         "unweighted_td",
+                         "Exports")], group = 'Time')
+
+
+## construct a dataframe with the number of NAs in the Dataset
+na_count <- sapply(master_casted, function(y) sum(length(which(is.na(y)))))
+na_count <- data.frame(na_count)
+
+
+
+
+
+#### Models ####
+
+years_in_iv <- c('2008','2010', '2012', '2014', '2015', '2016', '2017', '2018')
+
+
+##IGNORE THESE IVs, this code is here in case I want to run an IV later and recycle the lapply function. 
+iv_vec <- lapply(years_in_iv, function(x) ivreg(paste0(paste("EmployAgriDiff",x,sep="_"), '~', paste("ManuExports",x,sep="_") ,'+',paste("JournalArticles",x,sep="_") ,'+',paste("TaxGDP",x,sep="_") ,'+', paste("PrimaryEnroll",x,sep="_"), '|', paste("log_td_u",x,sep="_"),'+', paste("JournalArticles",x,sep="_") ,'+', paste("TaxGDP",x,sep="_") ,'+',paste("PrimaryEnroll",x,sep="_")), 
+                                                                                                 data = master_casted))
+IV_results <- outreg(setNames(iv_vec, years_in_iv))
+
+good_iv <- ivreg(EmployAgriDiff_17_10 ~ raw_td_2017 + ManuExports_2017 + JournalArticles_2017 + TaxGDP_2017 + PrimaryEnroll_2017 | log_td_u_2017+ JournalArticles_2017 + TaxGDP_2017 + PrimaryEnroll_2017, 
+                 data = master_casted, model = TRUE)
+summary(good_iv)
+
+
+
+## get string for summary statistics. 
+## figure out a smarter way to do this. 
+## maybe use the master_merge and group by time instead. 
+## figure out how to get no. of N for each with overlap and get pattern of missingness. 
+description <- lapply(years_two_diff, function(x) (paste(paste("master_casted$EmployAgriDiff_2006",x,sep="_") ,
+                                                            paste("master_casted$raw_td",x,sep="_") ,
+                                                            paste("master_casted$ManuExports",x -2,sep="_") ,
+                                                            'master_casted$conflict_2010',
+                                                            "master_casted$polity_2010",
+                                                            paste("master_casted$TaxGDP",x,sep="_") ,
+                                                            paste("master_casted$PrimaryEnroll",x,sep="_") ,
+                                                            paste("master_casted$StartUpCostGNIpc",x,sep="_"),
+                                                            paste("master_casted$MilitaryExp",x,sep="_"),
+                                                            paste("master_casted$PatentApps",x,sep="_"),
+                                                            paste("master_casted$FDINetInBoP",x,sep="_"), sep=',')))
+
+#calcalute the summary statistics for each variable at different times
+out1 <- describe(cbind(master_casted$EmployAgriDiff_2006_2008,master_casted$EmployAgri_2008,master_casted$raw_td_2008,master_casted$ManuExports_2006,master_casted$conflict_2010,master_casted$polity_2010,master_casted$TaxGDP_2008,master_casted$PrimaryEnroll_2008,master_casted$StartUpCostGNIpc_2008,master_casted$PatentApps_2008,master_casted$FDINetInBoP_2008))
+out2 <- describe(cbind(master_casted$EmployAgriDiff_2006_2010,master_casted$EmployAgri_2010,master_casted$raw_td_2010,master_casted$ManuExports_2008,master_casted$conflict_2010,master_casted$polity_2010,master_casted$TaxGDP_2010,master_casted$PrimaryEnroll_2010,master_casted$StartUpCostGNIpc_2010,master_casted$PatentApps_2010,master_casted$FDINetInBoP_2010))
+out3 <- describe(cbind(master_casted$EmployAgriDiff_2006_2012,master_casted$EmployAgri_2012,master_casted$raw_td_2012,master_casted$ManuExports_2010,master_casted$conflict_2010,master_casted$polity_2010,master_casted$TaxGDP_2012,master_casted$PrimaryEnroll_2012,master_casted$StartUpCostGNIpc_2012,master_casted$PatentApps_2012,master_casted$FDINetInBoP_2012))
+out4 <- describe(cbind(master_casted$EmployAgriDiff_2006_2014,master_casted$EmployAgri_2014,master_casted$raw_td_2014,master_casted$ManuExports_2012,master_casted$conflict_2010,master_casted$polity_2010,master_casted$TaxGDP_2014,master_casted$PrimaryEnroll_2014,master_casted$StartUpCostGNIpc_2014,master_casted$PatentApps_2014,master_casted$FDINetInBoP_2014))
+out5 <- describe(cbind(master_casted$EmployAgriDiff_2006_2016,master_casted$EmployAgri_2016,master_casted$raw_td_2016,master_casted$ManuExports_2014,master_casted$conflict_2010,master_casted$polity_2010,master_casted$TaxGDP_2016,master_casted$PrimaryEnroll_2016,master_casted$StartUpCostGNIpc_2016,master_casted$PatentApps_2016,master_casted$FDINetInBoP_2016))
+out6 <- describe(cbind(master_casted$EmployAgriDiff_2006_2017,master_casted$EmployAgri_2017,master_casted$raw_td_2017,master_casted$ManuExports_2015,master_casted$conflict_2010,master_casted$polity_2010,master_casted$TaxGDP_2017,master_casted$PrimaryEnroll_2017,master_casted$StartUpCostGNIpc_2017,master_casted$PatentApps_2017,master_casted$FDINetInBoP_2017))
+
+out7 <- describe(cbind(master_casted$EmployAgriDiff_2006_2018,
+                       master_casted$EmployAgri_2018,
+                       master_casted$raw_td_2018,
+                       master_casted$ManuExports_2016,
+                       master_casted$conflict_2010,
+                       master_casted$polity_2010,
+                       master_casted$TaxGDP_2018,
+                       master_casted$PrimaryEnroll_2018,
+                       master_casted$StartUpCostGNIpc_2018,
+                       master_casted$PatentApps_2018,
+                       master_casted$FDINetInBoP_2018))
+
+write.table(out6, file = "sumstats.txt", sep = ",", quote = FALSE, row.names = F)
+
+
+years_two_diff <- c(2008, 2010, 2012, 2014, 2016, 2017, 2018)
+
+#broadband per hundred or internet per million -- paste("EmployAgriDiff_2006",x,sep="_")
+reg_emp_rawtd_vec <- lapply(years_two_diff, function(x) lm(paste0(paste("EmployAgriDiff_2006",x,sep="_"), '~', 
+                                                               paste("raw_td",x,sep="_") ,'+', 
+                                                               paste("ManuExports",x -2,sep="_") ,'+',
+                                                               paste("TaxGDP",x,sep="_") ,'+', 
+                                                               paste("PrimaryEnroll",x,sep="_") ,"+",
+                                                               paste("StartUpCostGNIpc",x,sep="_"),'+',
+                                                               paste("PatentApps",x,sep="_"),'+',
+                                                               paste("FDINetInBoP",x,sep="_"),"+",
+                                                               'conflict_2010','+',
+                                                               "polity_2010"),
+                                                           data = master_casted))
+raw_td <- outreg(setNames(reg_emp_rawtd_vec, years_two_diff))
+
+
+reg_undifferenced <- lapply(years_two_diff, function(x) lm(paste0(paste("EmployAgri",x,sep="_"), '~', 
+                                                                  paste("raw_td",x,sep="_") ,'+', 
+                                                                  paste("ManuExports",x -2,sep="_") ,'+',
+                                                                  paste("TaxGDP",x,sep="_") ,'+', 
+                                                                  paste("PrimaryEnroll",x,sep="_") ,"+",
+                                                                  paste("StartUpCostGNIpc",x,sep="_"),'+',
+                                                                  paste("PatentApps",x,sep="_"),'+',
+                                                                  paste("FDINetInBoP",x,sep="_"),"+",
+                                                                  'conflict_2010','+',
+                                                                  "polity_2010"),
+                                                           data = master_casted))
+undifferenced <- outreg(setNames(reg_undifferenced, years_two_diff))
