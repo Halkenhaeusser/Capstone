@@ -1,0 +1,25 @@
+## Coffee Price fluctuations figure
+
+library(tidyverse)
+library(plotly)
+library(reshape2)
+
+#use common theme
+new <- theme_set(theme_bw())
+theme_update(text=element_text(size=16,  family="Times New Roman"))
+
+
+#get the coffee prices data
+coffee_prices <- read.csv("/Users/johannes/Desktop/Minerva/Capstone/Coffee Indicator prices.csv")
+#convert to date
+coffee_prices$datified <- as.Date(coffee_prices$Date)
+
+#make the ggplot figure
+figure_coffee_prices <- ggplot(data = coffee_prices, 
+                                  aes(x = datified, ymin = -20, ymax = 50)) + 
+  geom_line(y = coffee_prices$Change, color = 'black') +
+  #add a label every 2 years
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  labs(y = "Coffee Price Indicator (%∆ to previous month)", x = "Year") 
+
+figure_coffee_prices
