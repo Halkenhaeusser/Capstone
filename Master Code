@@ -23,12 +23,12 @@ library(plm)
 library(stargazer)
 library(ggdag)
 library(mice)
-
+library(lattice)
 library(naniar)
 library(finalfit) 
 library(ipw)
 library(lmtest)
-
+library(patchwork)
 library(corrgram)
 
 library(cobalt)
@@ -37,25 +37,74 @@ library(WeightIt)
 
 # set the theme for consistent plotting
 new <- theme_set(theme_bw())
-theme_update(text=element_text(size=16,  family="Times New Roman"))
+theme_update(text=element_text(size=12,  family="Times New Roman"))
+
+
+#### Intro Figures
+
+
+## coffee price
+#use common theme
+
+#get the coffee prices data
+coffee_prices <- read.csv("/Users/johannes/Desktop/Minerva/Capstone/Coffee Indicator prices.csv")
+#convert to date
+coffee_prices$datified <- as.Date(coffee_prices$Date)
+
+#make the ggplot figure
+figure_coffee_prices <- ggplot(data = coffee_prices, 
+                               aes(x = datified, ymin = -20, ymax = 50)) + 
+  geom_line(y = coffee_prices$Change, color = 'black') +
+  #add a label every 2 years
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  labs(y = "Coffee Price Indicator (%∆ to previous month)", x = "Year") + 
+  theme()
+
+figure_coffee_prices
+ggsave('figure_coffee_prices.png', figure_coffee_prices , width = 8.5, height = 6, units = 'in')
+
+
+## Tariff Diff in US
+
+
+avg_tariffs <- read.csv("/Users/johannes/Desktop/Minerva/Capstone/Tariffs from US on other countries.csv",
+                        na.strings = "..")
+
+colnames(avg_tariffs) <- c("Country.Name", "Country.Code","Series.Name","Series.Code", 1990, 2000, 2006, 2007, 2008,2009,2010,2011,2012,2013,2014,2015)
+
+transpose_avg_tariff <- as.data.frame(t(as.matrix(avg_tariffs)))
+numeric_subsetting <- transpose_avg_tariff[6:15,]
+numeric_subsetting$V506 <- as.numeric(numeric_subsetting$V506)
+numeric_subsetting$V507 <- as.numeric(numeric_subsetting$V507)
+numeric_subsetting$V1 <- as.numeric(numeric_subsetting$V1)
+
+figure_average_tariffUS <- ggplot(data = numeric_subsetting, 
+                                  aes(x = V1, ymin = 5, ymax = 14)) + 
+  geom_line(y = numeric_subsetting$V506, color = 'black') +
+  geom_line(y = numeric_subsetting$V507, lty = 2, color = 'black') +
+  scale_x_continuous(breaks=seq(0,2014,2)) + 
+  labs(y = "Tariff in %", x = "Year") + 
+  annotate("text", x = 2012, y = 6, label = "Agricultural Tariffs", size=6,family="Times New Roman") +
+  annotate("text", x = 2012, y = 12.2, label = "Manufacturing Tariffs", size=6,family="Times New Roman") +
+  theme()
+figure_average_tariffUS
+ggsave('figure_average_tariffUS.png', figure_average_tariffUS , width = 8.5, height = 6, units = 'in')
+
+
 
 #### DAG ####
 # The DAG is the central piece of the analysis. 
 #Note that the DAG here is more for purposes of quick visualisation as ggdag's 
 #DAGs are not that pretty 
 
-
 theme_set(theme_dag())
-tidy_dagitty(graph_Draft_Dec)
-ggdag(graph_Draft_Dec, edge_type = "link_arc")
-
 #create the DAG object
-dagified <- dagify(Education ~ Conflict + Institutions + Country + Year,
-                   Homophily ~ Conflict + Education + ExportsLagged + FDI + Institutions + Country + Year,
-                   StructuralChange ~ TD + Conflict  + Education + ExportsLagged + FDI + Homophily + Institutions + TechProgress + Country + Year,
-                   FDI ~ Education + Institutions + Country + Year,
-                   TechProgress ~ Education + FDI + Institutions + Country + Year,
-                   TD ~ ExportsLagged + Homophily + Institutions + TechProgress + Country + Year,
+dagified <- dagify(Education ~ Conflict + Institutions + GDP + Country + Year,
+                   Homophily ~ Conflict + Education + ExportsLagged + FDI + GDP + Institutions + Country + Year,
+                   StructuralChange ~ TD + Conflict  + Education + ExportsLagged + FDI + GDP + Homophily + Institutions + TechProgress + Country + Year,
+                   FDI ~ Education + Institutions +  GDP + Country + Year,
+                   TechProgress ~ Education + FDI + Institutions + GDP + Country + Year,
+                   TD ~ ExportsLagged + Homophily + Institutions + TechProgress + GDP + Country + Year,
                    exposure = "TD",
                    outcome = "StructuralChange", 
                    latent = 'Homophily',
@@ -69,23 +118,25 @@ dagified <- dagify(Education ~ Conflict + Institutions + Country + Year,
                               "TD" = "Tariff\n Difference", 
                               "TechProgress" = "Tech\nProgress",
                               'Country' = 'Country',
-                              'Year' = "Year"))
+                              'Year' = "Year",
+                              'GDP' = 'GDP p.c\n Lagged'))
 
 #plot it with ggdag
 ggdag(dagified, text = FALSE, use_labels = "label") 
 
-dagified %>% ggdag_dconnected("TD", "StructuralChange", use_labels = "label", text = F)
-
+master_dag <- dagified %>% ggdag_dconnected("TD", "StructuralChange", use_labels = "label", text = F)
+master_dag
+ggsave('master_dag.png', master_dag , width = 10.5, height = 6, units = 'in')
 
 
 
 # plot a DAG with a collider variable
-dagified_techprogressCollider <- dagify(Education ~ Conflict + Institutions + Country + Year,
-                                        Homophily ~ Conflict + Education + ExportsLagged + FDI + Institutions + Country + Year,
-                                        StructuralChange ~ TD + Conflict  + Education + ExportsLagged + FDI + Homophily + Institutions + Country + Year,
-                                        FDI ~ Education + Institutions + Country + Year,
-                                        TechProgress ~ Education + FDI + Institutions + StructuralChange + TD + Country + Year,
-                                        TD ~ ExportsLagged + Homophily + Institutions + Country + Year,
+dagified_techprogressCollider <- dagify(Education ~ Conflict + Institutions + Country + Year + GDP,
+                                        Homophily ~ Conflict + Education + ExportsLagged + FDI + Institutions  + GDP + Country + Year,
+                                        StructuralChange ~ TD + Conflict  + Education + ExportsLagged + FDI + Homophily + Institutions + GDP + Country + Year,
+                                        FDI ~ Education + Institutions + Country + GDP + Year,
+                                        TechProgress ~ Education + FDI + Institutions + StructuralChange + TD + GDP + Country + Year,
+                                        TD ~ ExportsLagged + Homophily + Institutions  + GDP + Country + Year,
                                         exposure = "TD",
                                         outcome = "StructuralChange", 
                                         latent = 'Homophily',
@@ -99,14 +150,57 @@ dagified_techprogressCollider <- dagify(Education ~ Conflict + Institutions + Co
                                                    "TD" = "Tariff\n Diff", 
                                                    "TechProgress" = "Tech\nProgress",
                                                    'Country' = 'Country',
-                                                   'Year' = "Year"))
+                                                   'Year' = "Year",
+                                                   'GDP' = 'GDP p.c\n Lagged'))
 
-ggdag(dagified_techprogressCollider, text = FALSE, use_labels = "label") 
 
-dagified_techprogressCollider %>% ggdag_dconnected(c("TD", 'TechProgress'), "StructuralChange", use_labels = "label", text = F)
+dags_collider <- dagified_techprogressCollider %>% ggdag_dconnected(c("TD", 'TechProgress'), "StructuralChange", use_labels = "label", text = F)
+
+dags_collider
+ggsave('dags_collider.png', dags_collider , width = 10.5, height = 6, units = 'in')
+
+
+
+#### Growth vs. Manufacturing Chart ####
+growthvmanu <- read.csv("/Users/johannes/Desktop/Minerva/Capstone/Growth_Manufacturing_WB_2010_2020/Growth_Manufacturing_Data.csv",
+                        na.strings = "..")
+
+#country code package allows for getting regions/continents from 
+#country codes/names
+growthvmanu$region <- countrycode(sourcevar = growthvmanu$Country.Name,
+                                  origin = "country.name",
+                                  destination = "region")
+colnames(growthvmanu)
+
+#take the differences 
+#possibly extend this by grouping by region and plotting the differences over time
+#similar to how they do it in Herrendorf et. al. 2014
+growthvmanu$delta_manu <- growthvmanu[,55] - growthvmanu[,50]
+growthvmanu$delta_growth <- growthvmanu[,53] - growthvmanu[,48]
+
+
+#make ggplot2 object, exclude the grouped stats. 
+growthmanu <- ggplot(data = growthvmanu[0:217,], 
+                     aes( y = delta_growth,
+                          x = delta_manu, 
+                          color=region, 
+                          text = Country.Name)) + 
+  theme(legend.position = 'bottom',
+        legend.box = "vertical")+
+  scale_color_discrete(name = "Region")+
+  #set the axis
+  labs(y = "Change in GDP Growth (%)", x = "Change in Growth in Manufacturing\n(%-points)") +
+  ylim(-5, 5) +
+  geom_point()
+
+growthmanu
+ggsave('growthmanu.png', growthmanu , width = 8.5, height = 6, units = 'in')
+
 
 
 #### WITS Data ####
+new <- theme_set(theme_bw())
+theme_update(text=element_text(size=12,  family="Times New Roman"))
 
 data <- read.csv("/Users/johannes/Desktop/Minerva/Capstone/TariffData/DataJobID-2083378_2083378_MultiYearwithOECD.csv")
 
@@ -349,29 +443,36 @@ master_casted$EmployAgriDiff_2006_2018 <- (master_casted$EmployAgri_2018 - maste
 world <- ne_countries(scale = "medium", returnclass = "sf")
 world_merged <-  merge(world, master_frame, by.x = "iso_a3", by.y = "country_code",all.x = F, all.y = T,  duplicateGeoms = F)
 world_merged$log_td <- log(world_merged$unweighted_td + 100)
-curr_year <- 2017
+curr_year <- 2012
 # gen world map
 world_map_tariff_diffs <- ggplot(data = subset(world_merged, time_year == curr_year)) +
   geom_sf(aes(fill = asinh(TariffDiff))) +
   theme(legend.position="bottom") +
   scale_fill_continuous(type = "gradient", trans = "pseudo_log") +
-  labs( fill = "TD") +
-  ggtitle(paste("World map", curr_year))
+  labs( fill = "Tariff Difference\n(inverse hyperbolic sine)")
 
 
 world_map_tariff_diffs
 
+ggsave('world_map_tariff_diffs.png', world_map_tariff_diffs , width = 8.5, height = 6, units = 'in')
+
+
+
 #### Exploratory Figures ####
 
 #Histogram of TD
-hist_td_2017 <- ggplot(data = master_casted, aes(x = TariffDiff_2017)) +
+hist_td_2012 <- ggplot(data = master_casted, aes(x = TariffDiff_2012)) +
   labs( x = "Tariff Differential")+
   geom_histogram()  +
-  labs(title = "Tariff Differential in 2017")
+  theme()
 
-hist_td_2017
-mean(master_casted$TariffDiff_2017, na.rm = TRUE)
-sd(master_casted$TariffDiff_2017, na.rm = TRUE)
+hist_td_2012
+ggsave('hist_td_2012.png', hist_td_2015 , width = 8.5, height = 6, units = 'in')
+
+
+
+mean(master_casted$TariffDiff_2012, na.rm = TRUE)
+sd(master_casted$TariffDiff_2012, na.rm = TRUE)
 
 
 ## Scatter Log GDP per Capita against Tariff Differential
@@ -418,22 +519,29 @@ employment_agri_time
 
 
 #Scatter gdp against in agricultural share
-employment_agri_2017 <- ggplot(data = master_casted, aes(x = EmployAgri_2017, y = GDPpc_2017, ymax = 110000)) +
+employment_agri_2017 <- ggplot(data = master_casted, aes(x = EmployAgri_2017, y = GDPpc_2017)) +
   labs( x = "Agricultural Employmnet (% of total Employment)", y ='GDP per capita ($US current)') +
-  geom_point() 
-
-employment_agri_2017 <- ggplotly(employment_agri_2017)
+  ylim(0, 110100) +
+  geom_point() +
+  theme()
 
 employment_agri_2017
+ggsave('employment_agri_2017.png', employment_agri_2017 , width = 8.5, height = 6, units = 'in')
+
+
+
 
 #Scatter gdp against in change agricultural share
-employment_agri_2017 <- ggplot(data = master_casted, aes(x = -EmployAgriDiff_2006_2017, y = GDPpc_2017, text = Country.Name, ymax = 110000)) +
+employment_agri_change <- ggplot(data = master_casted, aes(x = -EmployAgriDiff_2006_2017, y = GDPpc_2017, text = Country.Name, ymax = 110000)) +
   labs( x = "Change in Agricultural Employment \n(% of total Employment)", y ='GDP per capita ($US current)') +
-  geom_point() 
+  geom_point() +
+  ylim(0, 110100)
 
-employment_agri_2017 <- ggplotly(employment_agri_2017)
+employment_agri_change
+ggsave('employment_agri_change.png', employment_agri_change , width = 8.5, height = 6, units = 'in')
 
-employment_agri_2017
+
+
 
 
 employment_agri_GDP <- ggplot(data = master_merge, aes(x = EmployAgri, y = GDPpc, text= Country.Name, frame = Time)) +
@@ -470,8 +578,6 @@ employment_agri_td
 
 #### Political Variables ####
 
-library(plm)
-
 ## Conflict data
 
 #Data: https://datacatalog.worldbank.org/dataset/spread-conflict-data
@@ -500,13 +606,13 @@ for (year_i in c(2000, 2010)){
   decadal_conflict <- merge(decadal_conflict, sub_frame, by = "country", all.x = T, all.y = T)
 }
 
-conflicts_melted <- melt(conflicts_data, id.vars = c("gwno", "country", "year"))
-conflicts <- dcast(conflicts_melted, gwno + country + country_code ~ ... + year)
-#check that the number is at the right spot
-names(conflicts)<-ifelse(substr(names(conflicts),1,2) %in% c("19","20"),
-                         paste(substr(names(conflicts),6,nchar(conflicts)),
-                               substr(names(conflicts),1,4),sep="_")   ,
-                         names(conflicts))
+#conflicts_melted <- melt(conflicts_data, id.vars = c("gwno", "country", "year"))
+#conflicts <- dcast(conflicts_melted, gwno + country + country_code ~ ... + year)
+##check that the number is at the right spot
+#names(conflicts)<-ifelse(substr(names(conflicts),1,2) %in% c("19","20"),
+#                         paste(substr(names(conflicts),6,nchar(conflicts)),
+#                               substr(names(conflicts),1,4),sep="_")   ,
+#                         names(conflicts))
 
 decadal_conflict$country_code <- countrycode(sourcevar = decadal_conflict$country,
                                              origin = "country.name",
@@ -558,32 +664,6 @@ panel_merge <- merge(panel_merge, subset(polity_data[c('country_code','year','po
 ## mean OECD polity score
 mean(master_casted[master_casted$Country.Name %in% oecd, 'polity_2010'], na.rm = T)
 
-describeBy(master_merge[c('Time',"EmployAgri",                       
-                          "RDexpGDP",                                             
-                          "RDResearchersMilpeople",                                                     
-                          "TaxGDP",                                                                      
-                          "TradeGDP",                                                                
-                          "TradeServicesGDP",                                                                
-                          "AgriValueAddedGDP",                               
-                          "GDPcurrentUS",                                                                              
-                          "GDPpc",                                                                   
-                          "ExpEduGDP",                                       
-                          "IndustryValueAddedGDP",                                      
-                          "AgriExports",                               
-                          "ManuExports",                                             
-                          "ReguEnv",                                  
-                          "CorruptionPublic",
-                          "IPpayments",                      
-                          "IPreceipts",                      
-                          "PropertyRights",                        
-                          "PrimaryEnroll",                         
-                          "SecondaryEnroll",                                                             
-                          "TertiaryGross",                                                             
-                          "JournalArticles",                                                      
-                          "weighted_td",                                                                                                     
-                          "unweighted_td",
-                          "Exports")], group = 'Time')
-
 
 ## construct a dataframe with the number of NAs in the Dataset
 na_count <- sapply(master_casted, function(y) sum(length(which(is.na(y)))))
@@ -611,20 +691,20 @@ variables_in_model <- sapply(years_in_data, function(x) paste0(paste("EmployAgri
                                                                paste("PrimaryEnroll",x,sep="_") ,',',
                                                                paste("StartUpCostGNIpc",x,sep="_"),',',
                                                                paste("PatentApps",x,sep="_"),',',
-                                                               paste("FDINetInBoP",x,sep="_"),',',
+                                                               paste("FDINetInGDP",x,sep="_"),',',
                                                                'conflict_2010',',',
                                                                "polity_2010"))
 
 
 for_mice <- rawpanel %>% select (Country.Code, Country.Name,conflict_2010,polity_2010,
-                                 TariffDiff_2006,ManuExports_2006,GDPpc_2006,TaxGDP_2006,PrimaryEnroll_2006,StartUpCostGNIpc_2006,PatentApps_2006,FDINetInBoP_2006,
-                                 EmployAgriDiff_2008,TariffDiff_2008,ManuExports_2008,GDPpc_2008,TaxGDP_2008,PrimaryEnroll_2008,StartUpCostGNIpc_2008,PatentApps_2008,FDINetInBoP_2008,
-                                 EmployAgriDiff_2010,TariffDiff_2010,ManuExports_2010,GDPpc_2010,TaxGDP_2010,PrimaryEnroll_2010,StartUpCostGNIpc_2010,PatentApps_2010,FDINetInBoP_2010,
-                                 EmployAgriDiff_2012,TariffDiff_2012,ManuExports_2012,GDPpc_2012,TaxGDP_2012,PrimaryEnroll_2012,StartUpCostGNIpc_2012,PatentApps_2012,FDINetInBoP_2012,
-                                 EmployAgriDiff_2014,TariffDiff_2014,ManuExports_2014,GDPpc_2014,TaxGDP_2014,PrimaryEnroll_2014,StartUpCostGNIpc_2014,PatentApps_2014,FDINetInBoP_2014,
-                                 EmployAgriDiff_2016,TariffDiff_2016,ManuExports_2016,GDPpc_2016,TaxGDP_2016,PrimaryEnroll_2016,StartUpCostGNIpc_2016,PatentApps_2016,FDINetInBoP_2016,
-                                 EmployAgriDiff_2017,TariffDiff_2017,ManuExports_2017,GDPpc_2017,TaxGDP_2017,PrimaryEnroll_2017,StartUpCostGNIpc_2017,PatentApps_2017,FDINetInBoP_2017,
-                                 EmployAgriDiff_2018,TariffDiff_2018,ManuExports_2018,GDPpc_2018,TaxGDP_2018,PrimaryEnroll_2018,StartUpCostGNIpc_2018,PatentApps_2018,FDINetInBoP_2018,
+                                 TariffDiff_2006,ManuExports_2006,GDPpc_2006,TaxGDP_2006,PrimaryEnroll_2006,StartUpCostGNIpc_2006,PatentApps_2006,FDINetInGDP_2006,
+                                 EmployAgriDiff_2008,TariffDiff_2008,ManuExports_2008,GDPpc_2008,TaxGDP_2008,PrimaryEnroll_2008,StartUpCostGNIpc_2008,PatentApps_2008,FDINetInGDP_2008,
+                                 EmployAgriDiff_2010,TariffDiff_2010,ManuExports_2010,GDPpc_2010,TaxGDP_2010,PrimaryEnroll_2010,StartUpCostGNIpc_2010,PatentApps_2010,FDINetInGDP_2010,
+                                 EmployAgriDiff_2012,TariffDiff_2012,ManuExports_2012,GDPpc_2012,TaxGDP_2012,PrimaryEnroll_2012,StartUpCostGNIpc_2012,PatentApps_2012,FDINetInGDP_2012,
+                                 EmployAgriDiff_2014,TariffDiff_2014,ManuExports_2014,GDPpc_2014,TaxGDP_2014,PrimaryEnroll_2014,StartUpCostGNIpc_2014,PatentApps_2014,FDINetInGDP_2014,
+                                 EmployAgriDiff_2016,TariffDiff_2016,ManuExports_2016,GDPpc_2016,TaxGDP_2016,PrimaryEnroll_2016,StartUpCostGNIpc_2016,PatentApps_2016,FDINetInGDP_2016,
+                                 EmployAgriDiff_2017,TariffDiff_2017,ManuExports_2017,GDPpc_2017,TaxGDP_2017,PrimaryEnroll_2017,StartUpCostGNIpc_2017,PatentApps_2017,FDINetInGDP_2017,
+                                 EmployAgriDiff_2018,TariffDiff_2018,ManuExports_2018,GDPpc_2018,TaxGDP_2018,PrimaryEnroll_2018,StartUpCostGNIpc_2018,PatentApps_2018,FDINetInGDP_2018,
                                  EmployAgri_2006,EmployAgri_2008,EmployAgri_2010,EmployAgri_2012,EmployAgri_2014,EmployAgri_2016, EmployAgri_2017, EmployAgri_2018
 )
 
@@ -634,6 +714,9 @@ for_mice <- rawpanel %>% select (Country.Code, Country.Name,conflict_2010,polity
 
 
 #### Make a world map with missingness ####
+for_mice_with_missing <- for_mice
+for_mice_with_missing$n_miss_all <- apply(for_mice_with_missing, 1, function(x) sum(is.na(x)))
+
 world <- ne_countries(scale = "medium", returnclass = "sf")
 world_missing <-  merge(world, for_mice_with_missing, by.x = "iso_a3", by.y = "Country.Code",all.x = F, all.y = T,  duplicateGeoms = F)
 
@@ -642,16 +725,17 @@ world_map_missing <- ggplot(data = world_missing) +
   geom_sf(aes(fill = n_miss_all)) +
   theme(legend.position="bottom") +
   scale_fill_continuous(type = "gradient") +
-  labs( fill = "No. Missing") +
-  ggtitle(paste("World map"))
+  labs( fill = "Number of missing values in observation")
 
 
 world_map_missing
 
-summary(lm(n_miss_all ~ polity_2010, for_mice_with_missing))
+ggsave('world_map_missing.png',world_map_missing, width = 8.5, height = 6, units = 'in')
+
+summary(lm(asinh(n_miss_all) ~ log(polity_2010) + log(GDPpc_2016), for_mice_with_missing))
 
 
-select(for_mice, EmployAgriDiff_2008,TariffDiff_2008,ManuExports_2006,GDPpc_2006,TaxGDP_2008,PrimaryEnroll_2008,StartUpCostGNIpc_2008,PatentApps_2008,FDINetInBoP_2008,conflict_2010,polity_2010) %>%
+select(for_mice, EmployAgriDiff_2008,TariffDiff_2008,ManuExports_2006,GDPpc_2006,TaxGDP_2008,PrimaryEnroll_2008,StartUpCostGNIpc_2008,PatentApps_2008,FDINetInGDP_2008,conflict_2010,polity_2010) %>%
   missing_plot()
 
 
@@ -661,16 +745,16 @@ select(for_mice, EmployAgriDiff_2008,TariffDiff_2008,ManuExports_2006,GDPpc_2006
 for_mice <- for_mice[,order(colnames(for_mice))]
 colnames(for_mice)
 
-for_mice$FDI_10 <- rowMeans(for_mice[,c(21:26)], na.rm = T)
-for_mice$GDP_10 <- rowMeans(for_mice[,c(29:34)], na.rm = T)
-for_mice$ManuExport_10 <- rowMeans(for_mice[,c(37:42)], na.rm = T)
-for_mice$Patent_10 <- rowMeans(for_mice[,c(45:50)], na.rm = T)
-for_mice$PrimaryEnroll_10 <- rowMeans(for_mice[,c(54:59)], na.rm = T)
-for_mice$TariffDiff_10 <- rowMeans(for_mice[,c(62:67)], na.rm = T)
-for_mice$StartUp_10 <- rowMeans(for_mice[,c(70:75)], na.rm = T)
-for_mice$TaxGDP_10 <- rowMeans(for_mice[,c(78:85)], na.rm = T)
-for_mice$EmployAgri_00 <- rowMeans(for_mice[,c(4:5)], na.rm = T)
-for_mice$EmployAgri_10 <- rowMeans(for_mice[,c(6:11)], na.rm = T)
+for_mice$FDI_10 <- rowMeans(for_mice[,c("FDINetInGDP_2010","FDINetInGDP_2012","FDINetInGDP_2014","FDINetInGDP_2016","FDINetInGDP_2017","FDINetInGDP_2018")], na.rm = T)
+for_mice$GDP_10 <- rowMeans(for_mice[,c("GDPpc_2010","GDPpc_2012","GDPpc_2014","GDPpc_2016","GDPpc_2017","GDPpc_2018")], na.rm = T)
+for_mice$ManuExport_10 <- rowMeans(for_mice[,c("ManuExports_2010","ManuExports_2012","ManuExports_2014","ManuExports_2016","ManuExports_2017","ManuExports_2018")], na.rm = T)
+for_mice$Patent_10 <- rowMeans(for_mice[,c("PatentApps_2010","PatentApps_2012","PatentApps_2014","PatentApps_2016","PatentApps_2017","PatentApps_2018")], na.rm = T)
+for_mice$PrimaryEnroll_10 <- rowMeans(for_mice[,c("PrimaryEnroll_2010","PrimaryEnroll_2012","PrimaryEnroll_2014","PrimaryEnroll_2016","PrimaryEnroll_2017","PrimaryEnroll_2018")], na.rm = T)
+for_mice$StartUp_10 <- rowMeans(for_mice[,c("StartUpCostGNIpc_2010","StartUpCostGNIpc_2012", "StartUpCostGNIpc_2014", "StartUpCostGNIpc_2016","StartUpCostGNIpc_2017","StartUpCostGNIpc_2018" )], na.rm = T)
+for_mice$TariffDiff_10 <- rowMeans(for_mice[,c("TariffDiff_2010","TariffDiff_2012","TariffDiff_2014","TariffDiff_2016","TariffDiff_2017","TariffDiff_2018")], na.rm = T)
+for_mice$TaxGDP_10 <- rowMeans(for_mice[,c("TaxGDP_2010","TaxGDP_2012","TaxGDP_2014","TaxGDP_2016","TaxGDP_2017","TaxGDP_2018" )], na.rm = T)
+for_mice$EmployAgri_00 <- rowMeans(for_mice[,c("EmployAgri_2006","EmployAgri_2008")], na.rm = T)
+for_mice$EmployAgri_10 <- rowMeans(for_mice[,c("EmployAgri_2010","EmployAgri_2012","EmployAgri_2014", "EmployAgri_2016","EmployAgri_2017","EmployAgri_2018")], na.rm = T)
 for_mice$EmployDiff_00_10 <- (for_mice$EmployAgri_10 - for_mice$EmployAgri_00)*-1
 
 
@@ -701,6 +785,7 @@ out_10 <- describe(cbind(for_mice$FDI_10,
 
 decadel_reg_no_gdp <- lm(EmployDiff_00_10 ~ TariffDiff_10 +
                            FDI_10 + 
+                           ManuExport_10 +
                            Patent_10 + 
                            PrimaryEnroll_10 + 
                            StartUp_10 + 
@@ -711,25 +796,27 @@ decadel_reg_no_gdp <- lm(EmployDiff_00_10 ~ TariffDiff_10 +
 
 decadel_reg <- lm(EmployDiff_00_10 ~ TariffDiff_10 +
                     log(GDP_10) +
-                    TariffDiff_10 * log(GDP_10) + 
-                    FDI_10 + 
-                    log(GDP_10) + 
-                    Patent_10 + 
-                    PrimaryEnroll_10 + 
-                    StartUp_10 + 
-                    TaxGDP_10 + 
-                    polity_2010 + 
-                    conflict_2010,
+                    I(TariffDiff_10 * log(GDP_10)) +
+                    ManuExport_10 +
+                    asinh(FDI_10) + 
+                    log(Patent_10) + 
+                    log(PrimaryEnroll_10) + 
+                    asinh(StartUp_10) + 
+                    asinh(TaxGDP_10) + 
+                    asinh(polity_2010) + 
+                    asinh(conflict_2010),
                   data = for_mice)
 
 decadel_reg_no_patent <- lm(EmployDiff_00_10 ~ TariffDiff_10 +
-                              FDI_10 + 
                               log(GDP_10) +
-                              PrimaryEnroll_10 + 
-                              StartUp_10 + 
-                              TaxGDP_10 + 
-                              polity_2010 + 
-                              conflict_2010,
+                              I(TariffDiff_10 * log(GDP_10)) + 
+                              ManuExport_10 +
+                              asinh(FDI_10) + 
+                              log(PrimaryEnroll_10) + 
+                              asinh(StartUp_10) + 
+                              asinh(TaxGDP_10) + 
+                              asinh(polity_2010) + 
+                              asinh(conflict_2010),
                             data = for_mice)
 
 decadel_outregs <- outreg(list(decadel_reg_no_gdp,decadel_reg,decadel_reg_no_patent))
@@ -741,7 +828,7 @@ outreg(decadel_reg_no_patent)
 
 #### Inverse Probability of Treatment Weighting ####
 
-no_na <- drop_na(for_mice, any_of(c('EmployDiff_00_10','TariffDiff_10', 'FDI_10','GDP_10', 
+no_na <- drop_na(for_mice, any_of(c('EmployDiff_00_10','TariffDiff_10','ManuExport_10', 'FDI_10','GDP_10', 
                                     'Patent_10', 
                                     'PrimaryEnroll_10',
                                     'StartUp_10', 
@@ -751,7 +838,8 @@ no_na <- drop_na(for_mice, any_of(c('EmployDiff_00_10','TariffDiff_10', 'FDI_10'
 
 no_na$log_tariff <- asinh(no_na$TariffDiff_10)
 ipw_out <- ipwpoint(TariffDiff_10, family = "gaussian", numerator = ~1, denominator = ~ FDI_10 + 
-                      log(GDP_10) + 
+                      log(GDP_10) +
+                      ManuExport_10 +
                       Patent_10 + 
                       PrimaryEnroll_10 + 
                       StartUp_10 + 
@@ -772,20 +860,49 @@ weight_distribution
 ### USING WeightIt rather than IPW package
 ## allows for plotting love plots and also for the non-parametric approach!
 #calculate the weights. 
-weights_average <- weightit(formula = TariffDiff_10 ~ FDI_10 + 
-                              log(GDP_10) + 
-                              Patent_10 + 
-                              PrimaryEnroll_10 + 
-                              StartUp_10 + 
-                              TaxGDP_10 + 
-                              polity_2010 + 
-                              conflict_2010,
+weights_average <- weightit(formula = TariffDiff_10 ~ asinh(FDI_10) + 
+                              log(GDP_10) +  
+                              ManuExport_10 +
+                              log(Patent_10) + 
+                              log(PrimaryEnroll_10) + 
+                              asinh(StartUp_10) + 
+                              asinh(TaxGDP_10) + 
+                              asinh(polity_2010) + 
+                              asinh(conflict_2010),
                             data = no_na,
                             method = 'npcbps')
+#we have to define a variable name object to feed into the love plot to get pretty variable names
+var_name_object <- var.names(bal.tab(TariffDiff_10 ~ asinh(FDI_10) +  
+                                       ManuExport_10 +
+                    log(GDP_10) + 
+                    log(Patent_10) + 
+                    log(PrimaryEnroll_10) + 
+                    asinh(StartUp_10) + 
+                    asinh(TaxGDP_10) + 
+                    asinh(polity_2010) + 
+                    asinh(conflict_2010),
+                  data = no_na)
+          , type = 'vec', minimal = T)
+
+var_name_object['asinh(FDI_10)'] <- 'asinh of FDI'
+var_name_object['ManuExport_10'] <- 'Manufacturing Exports'
+var_name_object['log(GDP_10)'] <- 'Log of GDP p.c'
+var_name_object['log(Patent_10)'] <- 'Log of Patents'
+var_name_object['log(PrimaryEnroll_10)'] <- 'Log of Primary Enrollment'
+var_name_object['asinh(StartUp_10)'] <- 'asinh of Startup cost'
+var_name_object['asinh(TaxGDP_10)'] <- 'asinh of Taxation of GDP'
+var_name_object['asinh(polity_2010)'] <- 'asinh of Polity Score'
+var_name_object['asinh(conflict_2010)'] <- 'asinh of Conflict Score'
 
 #inspect the balance on covariates
-love.plot(weights_average, thresholds = c(cor = .1), abs = TRUE,
-          var.order = "unadjusted", line = F)
+love_plot <- love.plot(weights_average, thresholds = c(cor = .1), abs = TRUE,
+          var.order = "unadjusted", line = F,
+          var.names = var_name_object)
+
+love_plot
+
+ggsave('love_plot.png', love_plot, width = 8.5, height = 6, unit = 'in')
+
 
 #add the weights to the dataset
 no_na$cbps_weights <- weights_average$weights
@@ -802,14 +919,15 @@ sd(no_na$cbps_weights)
 #add the weights into the regression
 iptw_reg <- lm(EmployDiff_00_10 ~ TariffDiff_10 +
                  log(GDP_10) +
-                 TariffDiff_10 * log(GDP_10) +
-                 FDI_10 + 
-                 Patent_10 + 
-                 PrimaryEnroll_10 + 
-                 StartUp_10 + 
-                 TaxGDP_10 + 
-                 polity_2010 + 
-                 conflict_2010,
+                 I(TariffDiff_10 * log(GDP_10)) +
+                 ManuExport_10 +
+                 asinh(FDI_10) + 
+                 log(Patent_10) + 
+                 log(PrimaryEnroll_10) + 
+                 asinh(StartUp_10) + 
+                 asinh(TaxGDP_10) + 
+                 asinh(polity_2010) + 
+                 asinh(conflict_2010),
                data =  no_na,
                weights = cbps_weights)
 summary(iptw_reg)
@@ -822,18 +940,18 @@ world <- ne_countries(scale = "medium", returnclass = "sf")
 world_missing <-  merge(world, for_mice_missingcolumns, by.x = "iso_a3", by.y = "Country.Code",all.x = T, all.y = T,  duplicateGeoms = F)
 
 # gen world map
-world_map_missing <- ggplot(data = world_missing) +
+world_map_missing_degree <- ggplot(data = world_missing) +
   geom_sf(aes(fill = missingness)) +
   scale_fill_manual(values = c("navy", "tan", "seagreen"),
                     labels = c("Missing", "Patents Missing", "None Missing")) +
   theme(legend.position="bottom") +
-  labs( fill = "Degree of Missingness") +
-  ggtitle(paste("World map"))
+  labs( fill = "Degree of Missingness")
 
 
-world_map_missing
+world_map_missing_degree
+ggsave('world_map_missing_degree.png', world_map_missing_degree, width = 8.5, height = 6, unit = 'in')
 
-no_na_nopatent <- drop_na(for_mice, any_of(c('EmployDiff_00_10','TariffDiff_10', 'FDI_10','GDP_10', 
+no_na_nopatent <- drop_na(for_mice, any_of(c('EmployDiff_00_10','TariffDiff_10', 'FDI_10','GDP_10', 'ManuExport_10',
                                              'PrimaryEnroll_10',
                                              'StartUp_10', 
                                              'TaxGDP_10', 
@@ -843,13 +961,14 @@ no_na_nopatent <- drop_na(for_mice, any_of(c('EmployDiff_00_10','TariffDiff_10',
 no_na_nopatent$log_tariff <- asinh(no_na_nopatent$TariffDiff_10)
 
 
-weights_average_nopatent <- weightit(formula = TariffDiff_10 ~ FDI_10 + 
-                              log(GDP_10) + 
-                              PrimaryEnroll_10 + 
-                              StartUp_10 + 
-                              TaxGDP_10 + 
-                              polity_2010 + 
-                              conflict_2010,
+weights_average_nopatent <- weightit(formula = TariffDiff_10 ~ asinh(FDI_10) + 
+                                       log(GDP_10) +  
+                                       ManuExport_10 +
+                                       log(PrimaryEnroll_10) + 
+                                       asinh(StartUp_10) + 
+                                       asinh(TaxGDP_10) + 
+                                       asinh(polity_2010) + 
+                                       asinh(conflict_2010),
                             data = no_na_nopatent,
                             method = 'npcbps')
 
@@ -871,28 +990,25 @@ sd(no_na_nopatent$cbps_weights)
 
 #add the weights into the regression
 iptw_reg_nopatent <- lm(EmployDiff_00_10 ~ TariffDiff_10 +
-                 log(GDP_10) +
-                 TariffDiff_10 * log(GDP_10) +
-                 FDI_10 + 
-                 PrimaryEnroll_10 + 
-                 StartUp_10 + 
-                 TaxGDP_10 + 
-                 polity_2010 + 
-                 conflict_2010,
+                          log(GDP_10) +
+                          I(TariffDiff_10 * log(GDP_10)) +
+                          ManuExport_10 +
+                          asinh(FDI_10) + 
+                          log(PrimaryEnroll_10) + 
+                          asinh(StartUp_10) + 
+                          asinh(TaxGDP_10) + 
+                          asinh(polity_2010) + 
+                          asinh(conflict_2010),
                data =  no_na_nopatent,
                weights = cbps_weights)
 summary(iptw_reg_nopatent)
 
 
 #### PANEL DATA ####
-
-#### Panel Regressions ####
-
 panel_long <- subset(panel_merge[c('Country.Code', 'Time', 
                                    'EmployAgri', 
                                    "TariffDiff",
-                                   "GDPpc", 
-                                   "TradeGDP", 
+                                   "GDPpc",  
                                    "ManuExports", 
                                    "FDINetInGDP", 
                                    "PatentApps",
@@ -902,49 +1018,35 @@ panel_long <- subset(panel_merge[c('Country.Code', 'Time',
                                    "polity",
                                    "pop_affected")], Time < 2016)
 
-colnames(panel_long) <- c("Country.Code","Time","EmployAgri","TariffDiff","GDPpc","TradeGDP",
+colnames(panel_long) <- c("Country.Code","Time","EmployAgri","TariffDiff","GDPpc",
                           "ManuExports","FDINetInGDP","PatentApps","PrimaryEnroll",
                           "StartUpCostGNIpc","TaxGDP","polity", "conflict")
 
 panel_long$Country.Code <- as_factor(panel_long$Country.Code)
-
-# raw panel regression
-panel_reg <- plm(I(lag(EmployAgri, 1) - EmployAgri) ~ 
-                   TariffDiff +
-                   lag(log(GDPpc), 1) +
-                   I(TariffDiff*lag(log(GDPpc), 1)) +
-                   lag(TradeGDP, 1) +
-                   lag(ManuExports, 1) +
-                   FDINetInGDP +
-                   PatentApps +
-                   PrimaryEnroll +
-                   StartUpCostGNIpc +
-                   TaxGDP +
-                   polity +
-                   conflict,
-                 index = c('Country.Code', 'Time'), data = panel_long)
-
-summary(panel_reg)
 
 
 #### MICE ####
 
 panel_melted <- melt(panel_long, id.vars = c("Country.Code", "Time"))
 panel_wide <- dcast(panel_melted, Country.Code ~ ... + Time)
-panel_wide$Country.Code <- as_factor(panel_wide$Country.Code)
+#panel_wide$Country.Code <- as_factor(panel_wide$Country.Code)
 
-names(panel_wide)<-ifelse(substr(names(panel_wide),1, 1) %in% c("19","20"),
+
+names(panel_wide) <-ifelse(substr(names(panel_wide),1, 2) %in% c("19","20"),
                           paste(substr(names(panel_wide),6,nchar(panel_wide)),
                                 substr(names(panel_wide),1,4),sep="_")   ,
                           names(panel_wide))
 
-#miced_panel <- mice(panel_wide, m = 5, method = "cart")
-
-
-densityplot(miced_panel)
+## When running this for the first time uncomment the lines below. 
+## It takes some time to run so I save the output as a .csv file to import back afterwards. 
+miced_panel <- mice(panel_wide, m = 5, method = "cart")
 
 panel_complete_wide <- complete(miced_panel)
 write.csv(panel_complete_wide, "MICE_WidePanel.csv")
+
+#panel_complete_wide <- subset(read.csv("MICE_WidePanel.csv"), select = -c(X))
+
+
 
 names(panel_complete_wide)<-ifelse(substr(names(panel_complete_wide),1,3) %in% c("pop"),
                                    paste('conflict',
@@ -955,37 +1057,135 @@ panel_complete_long <- pivot_longer(panel_complete_wide, cols = -c('Country.Code
 panel_complete_long <- data.frame(panel_complete_long)
 
 
+#### Density plotting the mice outputs ####
+comparing_data_incomplete <- panel_long
+comparing_data_complete <- panel_complete_long
+
+comparing_data_incomplete$PreMice <- rep('Pre MICE', times = length(panel_long$Country.Code))
+comparing_data_complete$PreMice <- rep('Post MICE', times = length(panel_complete_long$Country.Code))
+colnames(comparing_data_incomplete) <- colnames(comparing_data_complete)
+
+comparing_data <- rbind(comparing_data_incomplete, comparing_data_complete)
+
+new <- theme_set(theme_bw())
+theme_update(text=element_text(size=12,  family="Times New Roman"))
+
+
+p1 <- ggplot(data = subset(comparing_data, year == 2014), aes(GDPpc, color = PreMice)) +
+  geom_density() +
+  labs(x = 'GDP per capita') +
+  theme(legend.position = 'bottom', legend.title = element_blank()) 
+p1
+
+p2 <- ggplot(data = subset(comparing_data, year == 2014), aes(ManuExports, color = PreMice)) +
+  geom_density() +
+  labs(x = 'Manufactured Exports (%)') +
+  theme(legend.position = 'bottom', legend.title = element_blank()) 
+p2
+
+p3 <- ggplot(data = subset(comparing_data, year == 2014), aes(FDINetInGDP, color = PreMice)) +
+  geom_density() +
+  labs(x = 'FDI') +
+  theme(legend.position = 'bottom', legend.title = element_blank()) 
+p3
+
+p4 <- ggplot(data = subset(comparing_data, year == 2014), aes(PatentApps, color = PreMice)) +
+  geom_density() +
+  labs(x = 'Patent Applications') +
+  theme(legend.position = 'bottom', legend.title = element_blank()) 
+p4
+
+p5 <- ggplot(data = subset(comparing_data, year == 2014), aes(PrimaryEnroll, color = PreMice)) +
+  geom_density() +
+  labs(x = 'Primary Enrollment Rate') +
+  theme(legend.position = 'bottom', legend.title = element_blank()) 
+p5
+
+p6 <- ggplot(data = subset(comparing_data, year == 2014), aes(StartUpCostGNIpc, color = PreMice)) +
+  geom_density() +
+  labs(x = 'Startup Cost (% of GNI p.c.)') +
+  theme(legend.position = 'bottom', legend.title = element_blank()) 
+p6
+
+p7 <- ggplot(data = subset(comparing_data, year == 2014), aes(TaxGDP, color = PreMice)) +
+  geom_density() +
+  labs(x = 'Tax (% of GDP)') +
+  theme(legend.position = 'bottom', legend.title = element_blank()) 
+p7
+
+p8 <- ggplot(data = subset(comparing_data, year == 2014), aes(polity, color = PreMice)) +
+  geom_density() +
+  labs(x = 'Democracy Score') +
+  theme(legend.position = 'bottom', legend.title = element_blank()) 
+p8
+
+p9 <- ggplot(data = subset(comparing_data, year == 2014), aes(conflict, color = PreMice)) +
+  geom_density() +
+  labs(x = 'Conflict Score') +
+  theme(legend.position = 'bottom', legend.title = element_blank()) 
+p9
+
+combined <- p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9 & theme(legend.position = "bottom")
+combined[[1]] = combined[[1]] + theme(axis.title.y = element_blank())
+combined[[2]] = combined[[2]] + theme( axis.title.y = element_blank())
+combined[[3]] = combined[[3]] +  theme( axis.title.y = element_blank())
+combined[[5]] = combined[[5]] +  theme(axis.title.y = element_blank())
+combined[[6]] = combined[[6]] + theme(axis.title.y = element_blank())
+combined[[7]] = combined[[7]] + theme(axis.title.y = element_blank())
+combined[[8]] = combined[[8]] + theme(axis.title.y = element_blank())
+combined[[9]] = combined[[9]] + theme(axis.title.y = element_blank())
+
+combined = combined + plot_layout(guides = "collect")
+combined
+ggsave('combined_density.png', combined, width = 8.5, height= 8.5, unit = 'in')
+
+#### Panel Regressions ####
 
 # raw panel regression
+panel_reg <- plm(I(lag(EmployAgri, 1) - EmployAgri)  ~ 
+                        TariffDiff +
+                        lag(log(GDPpc), 1) +
+                        I(TariffDiff*lag(log(GDPpc), 1)) +
+                        lag(ManuExports, 1) +
+                        asinh(FDINetInGDP) +
+                        log(PatentApps) +
+                        log(PrimaryEnroll) +
+                        asinh(StartUpCostGNIpc) +
+                        asinh(TaxGDP) +
+                        asinh(polity) +
+                        asinh(conflict),
+                      index = c('Country.Code', 'Time'), data = panel_long,
+                      model = "pooling")
+
+# miced panel regression
 panel_reg_mice <- plm(I(lag(EmployAgri, 1) - EmployAgri) ~ 
                         TariffDiff +
                         lag(log(GDPpc), 1) +
                         I(TariffDiff*lag(log(GDPpc), 1)) +
-                        lag(TradeGDP, 1) +
                         lag(ManuExports, 1) +
-                        FDINetInGDP +
-                        PatentApps +
-                        PrimaryEnroll +
-                        StartUpCostGNIpc +
-                        TaxGDP +
-                        polity +
-                        conflict,
-                      index = c('Country.Code', 'year'), data = panel_complete_long,
+                        asinh(FDINetInGDP) +
+                        log(PatentApps) +
+                        log(PrimaryEnroll) +
+                        asinh(StartUpCostGNIpc) +
+                        asinh(TaxGDP) +
+                        asinh(polity) +
+                        asinh(conflict),
+                      index = c('Country.Code', 'year'), 
+                      data = panel_complete_long,
                       model = "pooling")
 
-panel_reg_mice_yearFE <- plm(I(lag(EmployAgri, 1) - EmployAgri) ~ 
-                               TariffDiff+
+panel_reg_mice_yearFE <- plm(I(lag(EmployAgri, 1) - EmployAgri)~ 
+                               TariffDiff +
                                lag(log(GDPpc), 1) +
                                I(TariffDiff*lag(log(GDPpc), 1)) +
-                               lag(TradeGDP, 1) +
                                lag(ManuExports, 1) +
-                               FDINetInGDP +
-                               PatentApps +
-                               PrimaryEnroll +
-                               StartUpCostGNIpc +
-                               TaxGDP +
-                               polity +
-                               conflict,
+                               asinh(FDINetInGDP) +
+                               log(PatentApps) +
+                               log(PrimaryEnroll) +
+                               asinh(StartUpCostGNIpc) +
+                               asinh(TaxGDP) +
+                               asinh(polity) +
+                               asinh(conflict),
                              index = c('year'), data = panel_complete_long,
                              model = "pooling"
 )
@@ -994,21 +1194,56 @@ panel_reg_mice_countryFE <- plm(I(lag(EmployAgri, 1) - EmployAgri) ~
                                   TariffDiff +
                                   lag(log(GDPpc), 1) +
                                   I(TariffDiff*lag(log(GDPpc), 1)) +
-                                  lag(TradeGDP, 1) +
                                   lag(ManuExports, 1) +
-                                  FDINetInGDP +
-                                  PatentApps +
-                                  PrimaryEnroll +
-                                  StartUpCostGNIpc +
-                                  TaxGDP +
-                                  polity +
-                                  conflict,
+                                  asinh(FDINetInGDP) +
+                                  log(PatentApps) +
+                                  log(PrimaryEnroll) +
+                                  asinh(StartUpCostGNIpc) +
+                                  asinh(TaxGDP) +
+                                  asinh(polity) +
+                                  asinh(conflict),
                                 index = c('Country.Code'), 
                                 data = panel_complete_long,
                                 model = "pooling")
 
 
 #### TABLES ####
+
+## Table 1 - summary stats
+summarystatistics <- stargazer::stargazer(panel_wide[,c("EmployAgri_2015", 
+                                   "TariffDiff_2015", 
+                                   "GDPpc_2015",
+                                   "ManuExports_2015",
+                                   "FDINetInGDP_2015",
+                                   "PatentApps_2015", 
+                                   "PrimaryEnroll_2015",
+                                   "StartUpCostGNIpc_2015",
+                                   "TaxGDP_2015",
+                                   "polity_2015",
+                                   "conflict_2015")],
+                     summary = TRUE, type = 'html',
+                     omit.summary.stat = c('p25','p75') 
+                     ,out = 'capstone_summarystats_table.doc', digits =3)
+
+summarystatistics <- stargazer::stargazer(no_na[,c("EmployDiff_00_10", 
+                                                   'TariffDiff_10',
+                                                   'GDP_10',
+                                                   'ManuExport_10',
+                                                   'FDI_10',
+                                                   'Patent_10',
+                                                   'PrimaryEnroll_10',
+                                                   'StartUp_10',
+                                                   'TaxGDP_10',
+                                                   'polity_2010',
+                                                   'conflict_2010')],
+                                          summary = TRUE, type = 'html',
+                                          omit.summary.stat = c('p25','p75'),
+                                          out = 'capstone_summarystats_table_MEAN.doc', digits =3)
+
+
+
+
+
 rob_se_panels <- list(sqrt(diag(vcovHC(panel_reg, type = "HC1"))),
                       sqrt(diag(vcovHC(panel_reg_mice_yearFE, type = "HC1"))),
                       sqrt(diag(vcovHC(panel_reg_mice_countryFE, type = "HC1"))),
@@ -1018,42 +1253,63 @@ rob_se_averaged <- list(sqrt(diag(vcovHC(decadel_reg, type = "HC1"))),
                         sqrt(diag(vcovHC(iptw_reg_nopatent, type = "HC1"))))
 
 ##  code for table 2
-stargazer(panel_reg,
+tab_Mice <- stargazer(panel_reg,
           panel_reg_mice_yearFE,
           panel_reg_mice_countryFE,
           panel_reg_mice,
           se = rob_se_panels,
-          column.labels = c("RawData", 'MICEYear', "MICECountry", 'MICEfullFE'),
+          column.labels = c("RawData", 'MICE Year FEs', "MICE Country FEs", 'MICE full FEs'),
+          covariate.labels = c('Tariff Difference',
+                               'Log GDP p.c. previous year',
+                               'Tariff Difference Log GDP p.c. previous year',
+                               'Manufaturing Exports previous year',
+                               'FDI (asinh)',
+                               'Log of Patents',
+                               'Log of Primary Enrollment',
+                               'Start Up Cost (% of GNI p.c.) (asinh)',
+                               'Tax (% of GDP) (asinh)',
+                               'Polity (asinh)',
+                               'Conflict (asinh)'),
           align = T,
           type = 'html',
-          notes = c('The dependent variable is the difference between the share of employment in agriculture and the lagged share of employment in agriculture value. The treatment variable tariff difference is not significant. Robust standard errors are shown in brackets.'),
+          notes = c('The dependent variable is the difference between the share of employment in agriculture and the lagged share of employment in agriculture value. The treatment variable tariff difference is not significant. Robust standard errors are shown in brackets. The annotation asinh indicates that the variable is transformed using the inverse hyperbolic sine function.'),
           out = 'capstone_panel_regs_table.doc')
 
 # code for table 3
-stargazer(decadel_reg,
+tab_IPTW <- stargazer(decadel_reg,
           iptw_reg,
           iptw_reg_nopatent,
           se = rob_se_averaged,
           column.labels = c("Averages", 'IPTW', "IPTW"),
-          align = T,
           type = 'html',
+          covariate.labels = c('Tariff Difference',
+                               'Log GDP p.c.',
+                               'Tariff Difference Log GDP p.c.',
+                               'Manufaturing Exports',
+                               'FDI (asinh)',
+                               'Log of Patents',
+                               'Log of Primary Enrollment',
+                               'Start Up Cost (% of GNI p.c.) (asinh)',
+                               'Tax (% of GDP) (asinh)',
+                               'Polity (asinh)',
+                               'Conflict (asinh)'),
+          align = T,
           fontsize = 10,
-          notes = c('The dependent variable is the difference between the average share of agricultural employment from 2006-2008 and to the average between 2010 and 2018. The treatment variable tariff difference is not significant. Robust standard errors are shown in brackets. '),
-          out = 'capstone_imptw_regs_table.doc')
+          notes = c('The dependent variable is the difference between the average share of agricultural employment from 2006-2008 and to the average between 2010 and 2018. The treatment variable tariff difference is not significant. Robust standard errors are shown in brackets. The annotation asinh indicates that the variable is transformed using the inverse hyperbolic sine function.'),
+          out = 'capstone_iptw_regs_table.doc')
 
 ## TABLE 4
 panel_reg_mice_noPatents <- plm(I(lag(EmployAgri, 1) - EmployAgri) ~ 
-                        TariffDiff +
-                        lag(log(GDPpc), 1) +
-                        I(TariffDiff*lag(log(GDPpc), 1)) +
-                        lag(TradeGDP, 1) +
-                        lag(ManuExports, 1) +
-                        FDINetInGDP +
-                        PrimaryEnroll +
-                        StartUpCostGNIpc +
-                        TaxGDP +
-                        polity +
-                        conflict,
+                                  TariffDiff +
+                                  lag(log(GDPpc), 1) +
+                                  I(TariffDiff*lag(log(GDPpc), 1)) +
+                                  lag(ManuExports, 1) +
+                                  asinh(FDINetInGDP) +
+                                  log(PrimaryEnroll) +
+                                  asinh(StartUpCostGNIpc) +
+                                  asinh(TaxGDP) +
+                                  asinh(polity) +
+                                  asinh(conflict),
                       index = c('Country.Code', 'year'), data = panel_complete_long,
                       model = "pooling")
 
@@ -1061,12 +1317,23 @@ rob_se_collider<- list(sqrt(diag(vcovHC(panel_reg_mice, type = "HC1"))),
                       sqrt(diag(vcovHC(panel_reg_mice_noPatents, type = "HC1"))))
 
 ##  code for table 4
-stargazer(panel_reg_mice,
+tab_collider <- stargazer(panel_reg_mice,
           panel_reg_mice_noPatents,
           se = rob_se_collider,
-          column.labels = c("RawData", 'MICEYear', "MICECountry", 'MICEfullFE'),
+          column.labels = c("Full Model",'Excluding Patents'),
           align = T,
           type = 'html',
+          covariate.labels = c('Tariff Difference',
+                               'Log GDP p.c. previous year',
+                               'Tariff Difference Log GDP p.c. previous year',
+                               'Manufaturing Exports previous year',
+                               'FDI (asinh)',
+                               'Log of Patents',
+                               'Log of Primary Enrollment',
+                               'Start Up Cost (% of GNI p.c.) (asinh)',
+                               'Tax (% of GDP) (asinh)',
+                               'Polity (asinh)',
+                               'Conflict (asinh)'),
           notes = c('The dependent variable is the difference between the share of employment in agriculture and the lagged share of employment in agriculture value. The treatment variable tariff difference is not significant. Robust standard errors are shown in brackets.'),
           out = 'capstone_panel_regs_collider.doc')
 
